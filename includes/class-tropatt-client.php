@@ -13,8 +13,31 @@ class Tropatt_Client {
     /** Action Scheduler hook used for asynchronous order delivery. */
     const AS_HOOK = 'tropatt_send_order_event';
 
+    /**
+     * Orders already queued in this request, so a store that fires both the
+     * legacy checkout hook and the Store API one does not send the same order
+     * twice (the gateway deduplicates by idempotency key as well, but a second
+     * webhook is needless load and noise in the store log).
+     */
+    private static $queued = array();
+
     public static function on_order_created($order_id, $posted_data, $order) {
         self::dispatch((int)$order_id, 'created');
+    }
+
+    /**
+     * Cart/Checkout block (Store API) equivalent of
+     * `woocommerce_checkout_order_processed`.
+     *
+     * Orders placed through the block checkout never fire the legacy hook (the
+     * Store API fires `woocommerce_store_api_checkout_order_processed` instead,
+     * WC 7.2+), so without this handler every order from the block checkout was
+     * silently never sent to the CRM.
+     */
+    public static function on_store_api_order_processed($order) {
+        if (is_object($order) && method_exists($order, 'get_id')) {
+            self::dispatch((int)$order->get_id(), 'created');
+        }
     }
 
     public static function on_order_status_changed($order_id, $old_status, $new_status, $order) {
@@ -39,6 +62,12 @@ class Tropatt_Client {
         if ($order_id <= 0) {
             return;
         }
+
+        $queue_key = (int)$order_id . '|' . (string)$context;
+        if (isset(self::$queued[$queue_key])) {
+            return;
+        }
+        self::$queued[$queue_key] = true;
 
         if (function_exists('as_enqueue_async_action')) {
             as_enqueue_async_action(

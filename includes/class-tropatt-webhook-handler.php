@@ -112,6 +112,22 @@ class Tropatt_Webhook_Handler {
             return self::respond(array('success' => true, 'notice' => 'Ignored: no mapping for status'), 200);
         }
 
+        // `WC_Order::update_status()` accepts any string and stores it as-is, so a
+        // status WooCommerce does not know about leaves the order in an unusable
+        // state (the admin list shows `pending`) while the CRM is told the push
+        // succeeded — a silent divergence. Validate the slug first and refuse the
+        // packet instead. `wc_is_order_status()` expects the prefixed key of
+        // `wc_get_order_statuses()` (`wc-processing`), while orders store the bare
+        // slug, so the prefix is stripped here and re-added for the check.
+        $target_status = 'wc-' === substr($target_status, 0, 3) ? substr($target_status, 3) : $target_status;
+        if (function_exists('wc_is_order_status') && !wc_is_order_status('wc-' . $target_status)) {
+            return self::respond(array(
+                'error' => 'Unknown WooCommerce order status: ' . $target_status,
+                'code' => 'TROPATT_UNKNOWN_STATUS',
+                'known_statuses' => self::known_statuses()
+            ), 422);
+        }
+
         Tropatt_Client::$suppress_echo = true;
         try {
             $note = 'Статус обновлен из TropaTT CRM';
@@ -124,5 +140,23 @@ class Tropatt_Webhook_Handler {
         }
 
         return self::respond(array('success' => true, 'order_id' => $order_id, 'new_status' => $target_status), 200);
+    }
+
+    /**
+     * Registered WooCommerce status slugs without the `wc-` prefix, so a failed
+     * push tells the CRM administrator what the store actually accepts.
+     */
+    private static function known_statuses() {
+        if (!function_exists('wc_get_order_statuses')) {
+            return array();
+        }
+
+        $slugs = array();
+        foreach (array_keys((array)wc_get_order_statuses()) as $status) {
+            $status = (string)$status;
+            $slugs[] = 'wc-' === substr($status, 0, 3) ? substr($status, 3) : $status;
+        }
+
+        return $slugs;
     }
 }
