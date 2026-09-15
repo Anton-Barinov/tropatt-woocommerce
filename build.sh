@@ -6,7 +6,10 @@ cd "$(dirname "$0")"
 mkdir -p dist
 rm -f "dist/tropatt-woocommerce.zip"
 rm -rf .build && mkdir -p .build/tropatt-ecommerce
-cp -R tropatt-ecommerce.php includes languages .build/tropatt-ecommerce/
+cp -R tropatt-ecommerce.php includes .build/tropatt-ecommerce/
+if [ -d languages ]; then
+  cp -R languages .build/tropatt-ecommerce/
+fi
 (cd .build && zip -r -X "../dist/tropatt-woocommerce.zip" tropatt-ecommerce >/dev/null)
 rm -rf .build
 unzip -t "dist/tropatt-woocommerce.zip" >/dev/null

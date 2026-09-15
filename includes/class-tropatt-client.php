@@ -4,32 +4,66 @@ if (!defined('ABSPATH')) {
 }
 
 class Tropatt_Client {
+    /**
+     * Set while the plugin writes a status that came from the CRM, so the
+     * resulting woocommerce_order_status_changed hook does not bounce back.
+     */
     public static $suppress_echo = false;
 
+    /** Action Scheduler hook used for asynchronous order delivery. */
+    const AS_HOOK = 'tropatt_send_order_event';
+
     public static function on_order_created($order_id, $posted_data, $order) {
-        if (self::$suppress_echo) {
-            return;
-        }
-
-        $enabled = get_option('tropatt_enabled', 'no');
-        if ($enabled !== 'yes') {
-            return;
-        }
-
-        self::sync_order($order);
+        self::dispatch((int)$order_id, 'created');
     }
 
     public static function on_order_status_changed($order_id, $old_status, $new_status, $order) {
+        self::dispatch((int)$order_id, 'status_changed');
+    }
+
+    /**
+     * Queue the order event instead of sending it inside the checkout request.
+     *
+     * Action Scheduler ships with WooCommerce; when it is unavailable (an old or
+     * stripped install) the event is sent directly so no order is ever lost.
+     */
+    public static function dispatch($order_id, $context) {
         if (self::$suppress_echo) {
             return;
         }
 
-        $enabled = get_option('tropatt_enabled', 'no');
-        if ($enabled !== 'yes') {
+        if (get_option('tropatt_enabled', 'no') !== 'yes') {
             return;
         }
 
-        self::sync_order($order);
+        if ($order_id <= 0) {
+            return;
+        }
+
+        if (function_exists('as_enqueue_async_action')) {
+            as_enqueue_async_action(
+                self::AS_HOOK,
+                array('order_id' => (int)$order_id, 'context' => (string)$context),
+                'tropatt'
+            );
+            return;
+        }
+
+        self::process_queued_event($order_id, $context);
+    }
+
+    /**
+     * Action Scheduler callback: load the order again (it may have changed since
+     * it was queued) and push it to the CRM.
+     */
+    public static function process_queued_event($order_id, $context = '') {
+        $order = function_exists('wc_get_order') ? wc_get_order((int)$order_id) : null;
+
+        if (!$order) {
+            return array('success' => false, 'error' => 'Order not found: ' . (int)$order_id);
+        }
+
+        return self::sync_order($order);
     }
 
     public static function sync_order($order) {
@@ -46,7 +80,7 @@ class Tropatt_Client {
         }
 
         $order_id = $order->get_id();
-        $currency = strtoupper((string)$order->get_currency());
+        $currency = self::resolve_currency($order);
         $items = array();
 
         foreach ($order->get_items() as $item) {
@@ -104,10 +138,7 @@ class Tropatt_Client {
                     'postal_code' => (string)$order->get_shipping_postcode()
                 ),
                 'payment_method' => (string)$order->get_payment_method_title(),
-                'custom_fields' => array(
-                    'customer_note' => (string)$order->get_customer_note(),
-                    'customer_ip' => (string)$order->get_customer_ip_address()
-                )
+                'custom_fields' => self::collect_custom_fields($order)
             )
         );
 
@@ -148,5 +179,61 @@ class Tropatt_Client {
         }
 
         return array('success' => false, 'code' => $decoded['code'] ?? null, 'error' => $body);
+    }
+
+    /**
+     * The order currency, honouring the multi-currency plugins that store the
+     * transaction currency in order meta (WOOCS, WPML/WCML).
+     */
+    private static function resolve_currency($order) {
+        $currency = strtoupper((string)$order->get_currency());
+
+        foreach (array('_woocs_order_currency', '_wcml_order_currency') as $meta_key) {
+            $meta_value = $order->get_meta($meta_key);
+            if (is_string($meta_value) && trim($meta_value) !== '') {
+                return strtoupper(trim($meta_value));
+            }
+        }
+
+        return $currency;
+    }
+
+    /**
+     * Public order meta plus the fields written by third-party checkout field
+     * plugins, so custom checkout questions reach the CRM instead of being lost.
+     */
+    private static function collect_custom_fields($order) {
+        $fields = array(
+            'customer_note' => (string)$order->get_customer_note(),
+            'customer_ip' => (string)$order->get_customer_ip_address()
+        );
+
+        // Underscored keys of these plugins hold real checkout answers.
+        $plugin_prefixes = '/^_(wccf|wc_other|checkout_field|checkout|woocs|shipping_|billing_)/i';
+        $added = 0;
+
+        foreach ($order->get_meta_data() as $meta) {
+            if ($added >= 50) {
+                break;
+            }
+
+            $data = $meta->get_data();
+            $key = isset($data['key']) ? (string)$data['key'] : '';
+            $value = isset($data['value']) ? $data['value'] : null;
+
+            if ($key === '' || !is_scalar($value)) {
+                continue;
+            }
+
+            $is_public = strpos($key, '_') !== 0;
+            if (!$is_public && !preg_match($plugin_prefixes, $key)) {
+                continue;
+            }
+
+            $fields['wp_' . ltrim($key, '_')] = substr((string)$value, 0, 255);
+            $added++;
+        }
+
+        return $fields;
     }
 }

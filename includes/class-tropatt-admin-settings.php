@@ -17,7 +17,7 @@ class Tropatt_Admin_Settings {
     }
 
     public static function get_settings() {
-        $webhook_url = get_rest_url(null, 'tropatt/v1/webhook');
+        $webhook_url = get_rest_url(null, 'tropatt/v1/status');
 
         $settings = array(
             'section_title' => array(
