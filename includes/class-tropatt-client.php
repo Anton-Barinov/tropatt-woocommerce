@@ -149,14 +149,17 @@ class Tropatt_Client {
         $canonical = "POST\n/_module/crm.ecommerce-gateway/v1/orders\n" . $timestamp . "\n" . $nonce . "\n" . hash('sha256', $raw_body);
         $signature = base64_encode(hash_hmac('sha256', $canonical, $store_secret, true));
 
+        // wp_remote_post() expects an associative header map; a plain list would
+        // be sent as headers literally named "0", "1", ... and the gateway would
+        // never see X-Store-Key / X-TropaTT-Signature.
         $headers = array(
-            'Content-Type: application/json',
-            'Accept: application/json',
-            'X-Store-Key: ' . $store_key,
-            'X-TropaTT-Timestamp: ' . $timestamp,
-            'X-TropaTT-Nonce: ' . $nonce,
-            'X-TropaTT-Signature: ' . $signature,
-            'X-TropaTT-Idempotency-Key: ' . $store_key . ':order:' . $order_id
+            'Content-Type' => 'application/json',
+            'Accept' => 'application/json',
+            'X-Store-Key' => $store_key,
+            'X-TropaTT-Timestamp' => $timestamp,
+            'X-TropaTT-Nonce' => $nonce,
+            'X-TropaTT-Signature' => $signature,
+            'X-TropaTT-Idempotency-Key' => $store_key . ':order:' . $order_id
         );
 
         $response = wp_remote_post($gateway_url . '/orders', array(

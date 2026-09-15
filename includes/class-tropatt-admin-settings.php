@@ -119,12 +119,13 @@ class Tropatt_Admin_Settings {
         $canonical = "GET\n/_module/crm.ecommerce-gateway/v1/ping\n" . $timestamp . "\n" . $nonce . "\n" . $empty_sha256;
         $signature = base64_encode(hash_hmac('sha256', $canonical, $store_secret, true));
 
+        // Associative map required by wp_remote_get() (see class-tropatt-client.php).
         $headers = array(
-            'X-Store-Key: ' . $store_key,
-            'X-TropaTT-Timestamp: ' . $timestamp,
-            'X-TropaTT-Nonce: ' . $nonce,
-            'X-TropaTT-Signature: ' . $signature,
-            'Accept: application/json'
+            'X-Store-Key' => $store_key,
+            'X-TropaTT-Timestamp' => $timestamp,
+            'X-TropaTT-Nonce' => $nonce,
+            'X-TropaTT-Signature' => $signature,
+            'Accept' => 'application/json'
         );
 
         $response = wp_remote_get($ping_url, array(
