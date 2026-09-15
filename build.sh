@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# Reproducible build of the distribution archive.
+# Usage: bash build.sh   (produces dist/<archive>.zip from the repository root)
+set -euo pipefail
+cd "$(dirname "$0")"
+mkdir -p dist
+rm -f "dist/tropatt-woocommerce.zip"
+rm -rf .build && mkdir -p .build/tropatt-ecommerce
+cp -R tropatt-ecommerce.php includes languages .build/tropatt-ecommerce/
+(cd .build && zip -r -X "../dist/tropatt-woocommerce.zip" tropatt-ecommerce >/dev/null)
+rm -rf .build
+unzip -t "dist/tropatt-woocommerce.zip" >/dev/null
+echo "Built dist/tropatt-woocommerce.zip"
